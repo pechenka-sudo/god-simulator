@@ -1,3 +1,4 @@
+# main.py — Симулятор Бога Ultimate 2025 (веб-версия для GitHub Pages)
 from ursina import *
 from ursina.prefabs.first_person_controller import FirstPersonController
 from random import random, randint, choice
@@ -5,180 +6,130 @@ from math import sin, cos, radians
 import time
 
 app = Ursina()
-window.title = 'Симулятор Бога — Веб-версия'
-window.fps_counter.enabled = True
+window.title = 'СИМУЛЯТОР БОГА'
+window.borderless = False
+window.fullscreen = False
 window.exit_button.visible = False
+window.fps_counter.enabled = True
 
-# Настройки (упрощённые для веб)
-CHUNK_SIZE = 8  # Меньше чанков для скорости
-RENDER_DISTANCE = 3
+# === Настройки для веба ===
+CHUNK_SIZE = 10
+RENDER_DISTANCE = 4
 
-# Цвета вместо текстур (для веб, без файлов)
-block_colors = {
-    'grass': color.lime,
+# Цвета вместо текстур (чтобы не грузить файлы)
+colors = {
+    'grass': color.lime.tint(-0.2),
     'dirt': color.brown,
     'stone': color.gray,
     'sand': color.yellow,
-    'water': color.azure.tint(-0.5),
+    'water': color.azure.tint(-0.4),
     'wood': color.orange,
     'leaves': color.green,
-    'lava': color.red
+    'lava': color.red,
+    'gold': color.gold,
+    'snow': color.white
 }
-blocks = list(block_colors.keys())
-current_block = 0
+block_list = list(colors.keys())
+current_idx = 0
 
-player = FirstPersonController(collider='box', jump_height=2)
+player = FirstPersonController()
 player.speed = 8
+player.jump_height = 3
 player.cursor.visible = False
-player.ghost_mode = False
+ghost_mode = False
 
-# Небо и свет
 sky = Sky()
-sun = DirectionalLight(shadows=False)  # Тени off для скорости
-sun.look_at(Vec3(1, -1, -1))
+sun = DirectionalLight(shadows=False)
+sun.look_at(Vec3(1,-1,1))
 
-# Животные (упрощённо)
-animals = []
-class Animal(Entity):
-    def __init__(self, position):
-        super().__init__(
-            model='cube',
-            color=choice([color.white, color.magenta, color.pink]),
-            scale=1.5,
-            position=position + Vec3(0, 1, 0),
-            collider='box'
-        )
-        self.speed = 0.02 + random() * 0.02
-        animals.append(self)
+zombies = []
 
-    def update(self):
-        self.x += (random() - 0.5) * 0.1
-        self.z += (random() - 0.5) * 0.1
-
-# Воксели
-class Voxel(Button):
-    def __init__(self, position, btype='grass'):
+# === ВОКСЕЛЬ ===
+class Block(Button):
+    def __init__(self, pos, type='grass'):
         super().__init__(
             parent=scene,
-            position=position,
+            position=pos,
             model='cube',
             origin_y=0.5,
-            color=block_colors.get(btype, color.gray),
+            color=colors.get(type, color.white),
             highlight_color=color.lime
         )
-        self.block_type = btype
-        self.age = 0
+        self.type = type
 
-    def update(self):
-        # Падение песка/лавы (упрощённо)
-        if self.block_type in ('sand', 'lava') and self.y > -20:
-            below = [e for e in scene.entities if e.position == self.position + Vec3(0, -1, 0)]
-            if not below:
-                self.position += Vec3(0, -1, 0)
-
-        # Рост листьев
-        if self.block_type == 'wood':
-            self.age += 1
-            if self.age > 100 and random() < 0.01:
-                Voxel(self.position + Vec3(0, 1, 0), 'leaves')
-
-# Генерация чанков (процедурная)
+# === Простая генерация мира ===
 def generate_chunk(cx, cz):
     for x in range(CHUNK_SIZE):
         for z in range(CHUNK_SIZE):
             wx = cx * CHUNK_SIZE + x
             wz = cz * CHUNK_SIZE + z
-            # Простой шум для высоты
-            h = int((sin(wx * 0.1) + cos(wz * 0.1)) * 5 + 5)
+            height = int((sin(wx*0.07) + cos(wz*0.07)) * 4 + 6)
 
-            for y in range(-3, h):
-                if y < h - 3: block = 'stone'
-                elif y < h - 1: block = 'dirt'
-                elif y == h - 1:
-                    block = 'sand' if h < 3 else 'grass'
-                else: continue
-                Voxel((wx, y, wz), block)
-
-            # Деревья
-            if block == 'grass' and random() < 0.05:
-                for th in range(3, 5):
-                    Voxel((wx, h + th, wz), 'wood')
-                Voxel((wx, h + 5, wz), 'leaves')
-
-            # Животные
-            if random() < 0.02:
-                Animal(Vec3(wx, h + 2, wz))
+            for y in range(height-4, height):
+                if y < height-4: t = 'stone'
+                elif y < height-1: t = 'dirt'
+                else: t = 'grass' if height > 3 else 'sand'
+                Block(Vec3(wx, y, wz), t)
 
 chunks = {}
-def generate_chunks_around_player():
+def load_chunks():
     cx = int(player.x // CHUNK_SIZE)
     cz = int(player.z // CHUNK_SIZE)
-    for dx in range(-RENDER_DISTANCE, RENDER_DISTANCE + 1):
-        for dz in range(-RENDER_DISTANCE, RENDER_DISTANCE + 1):
-            key = (cx + dx, cz + dz)
+    for dx in range(-RENDER_DISTANCE, RENDER_DISTANCE+1):
+        for dz in range(-RENDER_DISTANCE, RENDER_DISTANCE+1):
+            key = (cx+dx, cz+dz)
             if key not in chunks:
-                generate_chunk(cx + dx, cz + dz)
+                generate_chunk(cx+dx, cz+dz)
                 chunks[key] = True
 
-# Божественные силы (упрощённые)
-def lightning_strike():
-    pos = player.position + player.forward * 20 + Vec3(0, 20, 0)
-    bolt = Entity(model='cube', color=color.yellow, scale=(0.2, 30, 0.2), position=pos)
-    invoke(destroy, bolt, delay=0.5)
+# === БОЖЕСТВЕННЫЕ СИЛЫ ===
+def lightning():    Entity(model='cube', color=color.yellow, scale=(0.3,40,0.3), position=player.position+player.forward*30+Vec3(0,20,0), lifetime=0.3)
+def meteor():       Entity(model='sphere', color=color.orange, scale=5, position=(player.x+randint(-40,40),60,player.z+randint(-40,40))).animate_position_y(-10, duration=3)
+def tornado():      [Entity(model='cube', color=color.gray, scale=0.6, position=player.position+Vec3(randint(-10,10),randint(0,20),randint(-10,10))) for _ in range(20)]
+def flood():        [Block(player.position+Vec3(randint(-15,15),0,randint(-15,15)), 'water') for _ in range(80)]
+def volcano():      [Block((player.x+cos(radians(a))*r, randint(15,30), player.z+sin(radians(a))*r), 'lava') for r in range(5,20) for a in range(0,360,30)]
+def nuclear_winter(): [Entity(model='sphere', color=color.white, scale=0.15, position=(player.x+randint(-60,60),50,player.z+randint(-60,60)), velocity=Vec3(0,-10,0)) for _ in range(600)]
+def zombies():      [zombies.append(Entity(model='cube', color=color.dark_gray, scale=1.8, position=player.position+Vec3(randint(-30,30),5,randint(-30,30)), collider='box')) for _ in range(15)]
+def gold_rain():    [Entity(model='cube', color=colors['gold'], scale=1, position=(player.x+randint(-40,40),45,player.z+randint(-40,40)), velocity=Vec3(0,-12,0)) for _ in range(100)]
+def levitate():     [setattr(e, 'y', e.y+3) for e in scene.entities if isinstance(e, Block) and distance(e, player) < 25]
+def fire_rain():    [Entity(model='sphere', color=color.orange, scale=1.2, position=(player.x+randint(-35,35),50,player.z+randint(-35,35)), velocity=Vec3(0,-15,0)) for _ in range(60)]
+def apocalypse():   [f() for f in [meteor, volcano, nuclear_winter, zombies, fire_rain]]
 
-def meteor():
-    m_pos = player.position + Vec3(randint(-20, 20), 40, randint(-20, 20))
-    meteor = Entity(model='sphere', color=color.orange, scale=2, position=m_pos)
-    meteor.animate_position(m_pos + Vec3(0, -50, 0), duration=2)
-    invoke(destroy, meteor, delay=2)
-
-def tornado():
-    for _ in range(10):
-        Entity(model='cube', color=color.gray, scale=0.5,
-               position=player.position + Vec3(randint(-5,5), randint(0,10), randint(-5,5)),
-               rotation=Vec3(randint(0,360), 0, 0))
-
-# Управление
+# === УПРАВЛЕНИЕ ===
 def input(key):
-    global current_block
+    global current_idx, ghost_mode
     if key == 'escape': quit()
-    if key == 'scroll up': current_block = (current_block + 1) % len(blocks)
-    if key == 'scroll down': current_block = (current_block - 1) % len(blocks)
-    if key == 'g':  # Полёт
-        player.ghost_mode = not player.ghost_mode
-        player.collider = None if player.ghost_mode else 'box'
-        player.speed = 15 if player.ghost_mode else 8
+    if key == 'scroll up':   current_idx = (current_idx + 1) % len(block_list)
+    if key == 'scroll down': current_idx = (current_idx - 1) % len(block_list)
+    if key == 'g':
+        ghost_mode = not ghost_mode
+        player.collider = None if ghost_mode else 'box'
+        player.speed = 25 if ghost_mode else 8
 
-    # Силы
-    if key == 'l': lightning_strike()
-    if key == 'm': meteor()
-    if key == 't': tornado()
-    if key == 'f':  # Наводнение (добавить воду)
-        for _ in range(20): Voxel(player.position + Vec3(randint(-5,5), 0, randint(-5,5)), 'water')
+    # СИЛЫ
+    {'l': lightning, 'm': meteor, 't': tornado, 'f': flood, 'v': volcano,
+     'n': nuclear_winter, 'z': zombies, 'h': gold_rain, 'i': levitate,
+     'j': fire_rain, 'x': apocalypse}.get(key, lambda:None)()
 
-    # Блоки
+    # Строительство
     if held_keys['left mouse'] and mouse.hovered_entity:
-        Voxel(mouse.hovered_entity.position + mouse.normal, blocks[current_block])
+        Block(mouse.hovered_entity.position + mouse.normal, block_list[current_idx])
     if held_keys['right mouse'] and mouse.hovered_entity:
         destroy(mouse.hovered_entity)
 
 # UI
-Text("Симулятор Бога\nЛКМ: создать | ПКМ: удалить\nG: полёт | L: молния | M: метеор | T: торнадо | F: наводнение", 
-     origin=(0,0), y=0.45, scale=2, color=color.yellow)
+Text('L-молния │ M-метеорит │ T-торнадо │ F-наводнение │ V-вулкан │ N-зима │ Z-зомби │ H-огонь │ J-золото │ I-левитация │ X-АПОКАЛИПСИС │ G-полёт', 
+     origin=(0,0), y=.45, scale=1.6, color=color.cyan)
 
-current_text = Text('', x=-0.8, y=0.4, scale=1.5)
+Text(lambda: f'Блок: {block_list[current_idx].upper()}  │  Режим: {"ПОЛЁТ" if ghost_mode else "ХОДЬБА"}', x=-0.87, y=0.4, scale=1.8)
 
 def update():
-    generate_chunks_around_player()
-    current_text.text = f"Блок: {blocks[current_block].upper()}\nРежим: {'ПОЛЁТ' if player.ghost_mode else 'ЗЕМЛЯ'}"
-    sun.rotation_y += 0.2
-    # Анимация животных
-    for a in animals[:]:
-        if distance(a, player) > 50:  # Удаляем дальних
-            destroy(a)
-            animals.remove(a)
+    load_chunks()
+    # зомби преследуют
+    for z in zombies[:]:
+        dir = (player.position - z.position).normalized()
+        z.position += dir * 0.07
+        if distance(z, player) > 100: destroy(z); zombies.remove(z)
 
-# Начальная генерация
-generate_chunks_around_player()
-
+load_chunks()
 app.run()
