@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>СИМУЛЯТОР БОГА — 100% в браузере</title>
+<style>
+  body { margin:0; overflow:hidden; background:#000; font-family:Arial; }
+  #info { position:absolute; top:10px; left:10px; color:white; background:rgba(0,0,0,0.5); padding:10px; border-radius:8px; pointer-events:none; }
+  canvas { display:block; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/three@0.167.1/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.167.1/examples/js/controls/PointerLockControls.js"></script>
+</head>
+<body>
+<div id="info">
+  Симулятор Бога<br>
+  >
+  WASD — двигаться | Мышь — смотреть | ЛКМ — поставить блок | ПКМ — сломать<br>
+  Колёсико — сменить блок | G — полёт | L M F Z X — божественные силы!
+</div>
+<script>
+// === Three.js основа ===
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.FogExp2(0x87ceeb, 0.002);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.PointerLockControls(camera, document.body);
+document.body.addEventListener('click', () => controls.lock());
+
+const blocks = {};
+const blockTypes = ['grass','dirt','stone','water','lava','gold'];
+let currentType = 0;
+const textures = {
+  grass: 0x00ff00,
+  dirt: 0x8b4513,
+  stone: 0xc0c0c0,
+  water: 0x0080ff,
+  lava: 0xff4400,
+  gold: 0xffd700
+};
+
+// === Генерация мира ===
+function createBlock(x,y,z,type='grass'){
+  if (blocks[`${x}_${y}_${z}`]) return;
+  const geometry = new THREE.BoxGeometry(1,1,1);
+  const material = new THREE.MeshLambertMaterial({color: textures[type], transparent: type==='water', opacity: type==='water'?0.6:1});
+  const cube = new THREE.Mesh(geometry, material);
+  cube.position.set(x+0.5, y+0.5, z+0.5);
+  scene.add(cube);
+  blocks[`${x}_${y}_${z}`] = cube;
+}
+
+// Начальный мир
+for(let x=-20;x<20;x++){
+  for(let z=-20;z<20;z++){
+    const h = Math.floor(Math.sin(x*0.1)*Math.cos(z*0.1)*3 + 5);
+    for(let y=0;y<h;y++){
+      let type = y<h-3?'stone':y<h-1?'dirt':'grass';
+      createBlock(x,y,z,type);
+    }
+  }
+}
+
+// Свет
+const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
+scene.add(light);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+dirLight.position.set(10,20,10);
+scene.add(dirLight);
+
+// Игрок
+camera.position.set(0,10,10);
+let fly = false;
+let velocity = new THREE.Vector3();
+
+// === Управление ===
+const keys = {};
+document.addEventListener('keydown', e=>keys[e.key.toLowerCase()]=true);
+document.addEventListener('keyup',   e=>keys[e.key.toLowerCase()]=false);
+
+document.addEventListener('wheel', e=>{
+  currentType = (currentType + (e.deltaY>0?1:-1) + blockTypes.length) % blockTypes.length;
+  document.getElementById('info').innerHTML += `<br>Блок: ${blockTypes[currentType].toUpperCase()}`;
+});
+
+document.addEventListener('mousedown', e=>{
+  if (!controls.isLocked) return;
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  const intersects = raycaster.intersectObjects(scene.children);
+  if (intersects.length>0){
+    const pos = intersects[0].point;
+    const n = intersects[0].normal;
+    if (e.button===0){ // ЛКМ — ставим
+      const x=Math.floor(pos.x+n.x), y=Math.floor(pos.y+n.y), z=Math.floor(pos.z+n.z);
+      createBlock(x,y,z, blockTypes[currentType]);
+    }
+    if (e.button===2){ // ПКМ — ломаем
+      const obj = intersects[0].object;
+      const x=Math.floor(obj.position.x-0.5), y=Math.floor(obj.position.y-0.5), z=Math.floor(obj.position.z-0.5);
+      scene.remove(obj);
+      delete blocks[`${x}_${y}_${z}`];
+    }
+  }
+});
+document.body.oncontextmenu = ()=>false; // отключаем контекстное меню
+
+// === БОЖЕСТВЕННЫЕ СИЛЫ ===
+function lightning(){
+  const pos = camera.position.clone().add(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(30));
+  pos.y += 20;
+  const bolt = new THREE.Mesh(new THREE.BoxGeometry(0.3,40,0.3), new THREE.MeshBasicMaterial({color:0xffff00}));
+  bolt.position.copy(pos);
+  scene.add(bolt);
+  setTimeout(()=>scene.remove(bolt),300);
+}
+
+function meteor(){
+  const m = new THREE.Mesh(new THREE.SphereGeometry(3), new THREE.MeshBasicMaterial({color:0xff8800}));
+  m.position.set(camera.position.x+Math.random()*80-40, 60, camera.position.z+Math.random()*80-40);
+  scene.add(m);
+  const fall = setInterval(()=>{
+    m.position.y -= 2;
+    if (m.position.y < 0){ scene.remove(m); clearInterval(fall); }
+  },30);
+}
+
+function flood(){
+  for(let i=0;i<100;i++){
+    createBlock(camera.position.x+Math.random()*40-20, 2, camera.position.z+Math.random()*40-20, 'water');
+  }
+}
+
+// === Основной цикл ===
+function animate(){
+  requestAnimationFrame(animate);
+
+  if (controls.isLocked){
+    const speed = keys['shift']?0.4:0.15;
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
+
+    if(keys['w']) camera.position.addScaledVector(dir, speed);
+    if(keys['s']) camera.position.addScaledVector(dir, -speed);
+    if(keys['a']) camera.position.addScaledVector(right, -speed);
+    if(keys['d']) camera.position.addScaledVector(right, speed);
+    if(keys[' '] || keys['g']){ // пробел или G — полёт вверх
+      camera.position.y += speed*2;
+      fly = true;
+    }
+    if(keys['c'] || keys['control']){ camera.position.y -= speed*2; }
+
+    // клавиши сил
+    if(keys['l']){ lightning(); keys['l']=false; }
+    if(keys['m']){ meteor(); keys['m']=false; }
+    if(keys['f']){ flood(); keys['f']=false; }
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
